@@ -16,7 +16,7 @@ jobs:
           java-version: 17
           cache: gradle
       - run: |
-            APK_FILE = $(find . -type f -name "*.apk")
+            APK_FILE=$(find . -type f -name "*.apk")
 
             echo $APK_FILE >> $GITHUB_ENV
 
