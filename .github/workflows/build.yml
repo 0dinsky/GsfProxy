@@ -15,7 +15,9 @@ jobs:
           distribution: adopt
           java-version: 17
           cache: gradle
-      - run: ./gradlew assembleRelease ls home/runner/work/GsfProxy/GsfProxy/services-framework-proxy
+      - run: |
+            ./gradlew assembleRelease 
+            ls home/runner/work/GsfProxy/GsfProxy/services-framework-proxy
       - uses: actions/upload-artifact@v4
         with:
           name: signed-gsf-apk
