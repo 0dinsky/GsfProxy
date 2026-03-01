@@ -17,7 +17,7 @@ jobs:
           cache: gradle
       - run: |
             ./gradlew assembleRelease 
-            ls services-framework-proxy/src
+            ls services-framework-proxy/src/main
       - uses: actions/upload-artifact@v4
         with:
           name: signed-gsf-apk
