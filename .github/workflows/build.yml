@@ -16,9 +16,31 @@ jobs:
           java-version: 17
           cache: gradle
       - run: |
+            APK_FILE = find . -type f -name "*.apk"
+
+            echo $APK_FILE >> $GITHUB_ENV
+
             ./gradlew assembleRelease 
-            find . -type f -name "*.apk"
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
+           
+            jarsigner -verbose \
+            -sigalg SHA1withRSA \
+            -digestalg SHA1 \
+            -keystore keystore.jks \
+            -storepass ${{ secrets.KEYSTORE_PASSWORD }} \
+            -keypass ${{ secrets.KEY_PASSWORD }} \
+            ${{ env.APK_FILE }} \
+            ${{ secrets.KEY_ALIAS }}
+
+            mkdir output
+
+            ZIPALIGN="$ANDROID_HOME/build-tools/36.0.0/zipalign"
+
+            $ZIPALIGN -v -p 4 \
+            ${{ env.APK_FILE }} \
+            output/GsfProxy.apk
+            
       - uses: actions/upload-artifact@v4
         with:
-          name: unsigned-gsf-apk
-          path: ./services-framework-proxy/build/outputs/apk/release/services-framework-proxy-release-unsigned.apk
+          name: signed-gsf-apk
+          path: output/GsfProxy.apk
