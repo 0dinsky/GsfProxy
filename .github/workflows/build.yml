@@ -20,5 +20,5 @@ jobs:
             find . -type f -name "*.apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: signed-gsf-apk
-          path: ./*/*/*/*/*.apk
+          name: unsigned-gsf-apk
+          path: ./services-framework-proxy/build/outputs/apk/release/services-framework-proxy-release-unsigned.apk
