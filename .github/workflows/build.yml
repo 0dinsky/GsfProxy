@@ -16,10 +16,6 @@ jobs:
           java-version: 17
           cache: gradle
       - run: |
-            APK_FILE=$(find . -type f -name "*.apk")
-
-            echo $APK_FILE >> $GITHUB_ENV
-
             ./gradlew assembleRelease 
             echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
            
@@ -29,7 +25,7 @@ jobs:
             -keystore keystore.jks \
             -storepass ${{ secrets.KEYSTORE_PASSWORD }} \
             -keypass ${{ secrets.KEY_PASSWORD }} \
-            ${{ env.APK_FILE }} \
+            ./services-framework-proxy/build/outputs/apk/release/services-framework-proxy-release-unsigned.apk \
             ${{ secrets.KEY_ALIAS }}
 
             mkdir output
@@ -37,7 +33,7 @@ jobs:
             ZIPALIGN="$ANDROID_HOME/build-tools/36.0.0/zipalign"
 
             $ZIPALIGN -v -p 4 \
-            ${{ env.APK_FILE }} \
+            ./services-framework-proxy/build/outputs/apk/release/services-framework-proxy-release-unsigned.apk \
             output/GsfProxy.apk
             
       - uses: actions/upload-artifact@v4
