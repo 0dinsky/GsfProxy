@@ -30,6 +30,15 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      # --- КРИТИЧЕСКИЙ ШАГ: Установка конкретных build-tools ---
+      - name: Install Android Build Tools 30.0.3
+        run: |
+          # Принятие лицензий (обязательно для скачивания компонентов)
+          yes | sdkmanager --licenses
+          # Установка конкретной версии build-tools
+          sdkmanager "build-tools;30.0.3"
+          echo "Build tools 30.0.3 installed."
+
       - name: Build and Sign APK
         run: |
           # 1. Сборка unsigned APK
@@ -40,16 +49,17 @@ jobs:
           echo "Decoding Keystore..."
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
 
-          # 3. Поиск apksigner
-          # apksigner находится внутри build-tools/<version>/bin/apksigner
-          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -n 1)
-          APKSIGNER="${BUILD_TOOLS_DIR}bin/apksigner"
+          # 3. Определение путей к инструментам (теперь они точно существуют)
+          BUILD_TOOLS_DIR="$ANDROID_HOME/build-tools/30.0.3/"
+          APKSIGNER="${BUILD_TOOLS_DIR}apksigner"
+          ZIPALIGN="${BUILD_TOOLS_DIR}zipalign"
 
-          if [ ! -f "$APKSIGNER" ]; then
-            echo "Error: apksigner not found in build-tools"
+          if [ ! -f "$APKSIGNER" ] || [ ! -f "$ZIPALIGN" ]; then
+            echo "Error: Required tools not found in $BUILD_TOOLS_DIR"
+            ls -R "$ANDROID_HOME/build-tools/"
             exit 1
           fi
-          echo "Using apksigner from: $APKSIGNER"
+          echo "Found apksigner and zipalign in $BUILD_TOOLS_DIR"
 
           INPUT_APK="./services-framework-proxy/build/outputs/apk/release/services-framework-proxy-release-unsigned.apk"
           OUTPUT_APK="output/GsfProxy.apk"
@@ -59,46 +69,15 @@ jobs:
             exit 1
           fi
 
-          # 4. Подпись APK через apksigner (v1 + v2 + v3 схемы)
-          echo "Signing APK with apksigner..."
-          "$APKSIGNER" sign \
-            --ks keystore.jks \
-            --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
-            --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" \
-            --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
-            --min-sdk-version 21 \
-            --v1-signing-enabled true \
-            --v2-signing-enabled true \
-            --v3-signing-enabled true \
-            "$INPUT_APK"
-
-          # 5. Проверка подписи (опционально, но полезно)
-          echo "Verifying signature..."
-          "$APKSIGNER" verify --verbose "$INPUT_APK"
-
-          # 6. Выравнивание (ZipAlign)
-          # Важно: zipalign должен выполняться ПОСЛЕ подписи, но обычно apksigner сам делает это корректно,
-          # однако для максимальной совместимости часто делают zipalign -> sign -> zipalign.
-          # В данном случае, так как мы подписали уже существующий файл, нам нужно убедиться, что он выровнен.
-          # Но apksigner обычно требует выровненный входной файл.
-          # Давайте сделаем классический порядок: ZipAlign -> Sign.
-          
-          # Исправляем порядок: сначала выравниваем, потом подписываем (или подписываем, если apksigner сам выравнивает, но лучше явно)
-          # Перепишем логику для надежности:
-          
-          # Удаляем предыдущие артефакты если есть
-          rm -rf output
-          mkdir -p output
-
-          # Шаг А: ZipAlign
+          # 4. Выравнивание (ZipAlign) - ДО подписи
           echo "Aligning APK..."
-          ZIPALIGN="${BUILD_TOOLS_DIR}bin/zipalign"
+          mkdir -p output
           ALIGNED_APK="output/aligned-unsigned.apk"
           
           "$ZIPALIGN" -v -p 4 "$INPUT_APK" "$ALIGNED_APK"
 
-          # Шаг Б: Подпись выровненного APK
-          echo "Signing aligned APK..."
+          # 5. Подпись APK через apksigner
+          echo "Signing aligned APK with apksigner..."
           "$APKSIGNER" sign \
             --ks keystore.jks \
             --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
@@ -109,8 +88,12 @@ jobs:
             --v2-signing-enabled true \
             --v3-signing-enabled true \
             "$ALIGNED_APK"
-            
-          # Финальный файл
+
+          # 6. Проверка подписи
+          echo "Verifying signature..."
+          "$APKSIGNER" verify --verbose "$ALIGNED_APK"
+
+          # 7. Перемещение финального файла
           mv "$ALIGNED_APK" "$OUTPUT_APK"
 
           echo "Build completed successfully. Output: $OUTPUT_APK"
