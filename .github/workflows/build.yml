@@ -2,7 +2,17 @@
 # SPDX-License-Identifier: CC0-1.0
 
 name: Build
-on: [pull_request, push, workflow_dispatch]
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Version name (optional)'
+        required: false
+        default: ''
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -10,33 +20,104 @@ jobs:
       - uses: actions/checkout@v2
         with:
           fetch-depth: 0
+
       - uses: actions/setup-java@v3
         with:
-          distribution: adopt
-          java-version: 17
-          cache: gradle
-      - run: |
-            ./gradlew assembleRelease 
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
-           
-            jarsigner -verbose \
-            -sigalg SHA1withRSA \
-            -digestalg SHA1 \
-            -keystore keystore.jks \
-            -storepass ${{ secrets.KEYSTORE_PASSWORD }} \
-            -keypass ${{ secrets.KEY_PASSWORD }} \
-            ./services-framework-proxy/build/outputs/apk/release/services-framework-proxy-release-unsigned.apk \
-            ${{ secrets.KEY_ALIAS }}
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
 
-            mkdir output
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-            ZIPALIGN="$ANDROID_HOME/build-tools/36.0.0/zipalign"
+      - name: Build and Sign APK
+        run: |
+          # 1. Сборка unsigned APK
+          echo "Building unsigned APK..."
+          ./gradlew assembleRelease
 
-            $ZIPALIGN -v -p 4 \
-            ./services-framework-proxy/build/outputs/apk/release/services-framework-proxy-release-unsigned.apk \
-            output/GsfProxy.apk
+          # 2. Декодирование и сохранение Keystore
+          echo "Decoding Keystore..."
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > keystore.jks
+
+          # 3. Поиск apksigner
+          # apksigner находится внутри build-tools/<version>/bin/apksigner
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/*/ | sort -V | tail -n 1)
+          APKSIGNER="${BUILD_TOOLS_DIR}bin/apksigner"
+
+          if [ ! -f "$APKSIGNER" ]; then
+            echo "Error: apksigner not found in build-tools"
+            exit 1
+          fi
+          echo "Using apksigner from: $APKSIGNER"
+
+          INPUT_APK="./services-framework-proxy/build/outputs/apk/release/services-framework-proxy-release-unsigned.apk"
+          OUTPUT_APK="output/GsfProxy.apk"
+
+          if [ ! -f "$INPUT_APK" ]; then
+            echo "Error: Unsigned APK not found at $INPUT_APK"
+            exit 1
+          fi
+
+          # 4. Подпись APK через apksigner (v1 + v2 + v3 схемы)
+          echo "Signing APK with apksigner..."
+          "$APKSIGNER" sign \
+            --ks keystore.jks \
+            --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
+            --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" \
+            --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
+            --min-sdk-version 21 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            "$INPUT_APK"
+
+          # 5. Проверка подписи (опционально, но полезно)
+          echo "Verifying signature..."
+          "$APKSIGNER" verify --verbose "$INPUT_APK"
+
+          # 6. Выравнивание (ZipAlign)
+          # Важно: zipalign должен выполняться ПОСЛЕ подписи, но обычно apksigner сам делает это корректно,
+          # однако для максимальной совместимости часто делают zipalign -> sign -> zipalign.
+          # В данном случае, так как мы подписали уже существующий файл, нам нужно убедиться, что он выровнен.
+          # Но apksigner обычно требует выровненный входной файл.
+          # Давайте сделаем классический порядок: ZipAlign -> Sign.
+          
+          # Исправляем порядок: сначала выравниваем, потом подписываем (или подписываем, если apksigner сам выравнивает, но лучше явно)
+          # Перепишем логику для надежности:
+          
+          # Удаляем предыдущие артефакты если есть
+          rm -rf output
+          mkdir -p output
+
+          # Шаг А: ZipAlign
+          echo "Aligning APK..."
+          ZIPALIGN="${BUILD_TOOLS_DIR}bin/zipalign"
+          ALIGNED_APK="output/aligned-unsigned.apk"
+          
+          "$ZIPALIGN" -v -p 4 "$INPUT_APK" "$ALIGNED_APK"
+
+          # Шаг Б: Подпись выровненного APK
+          echo "Signing aligned APK..."
+          "$APKSIGNER" sign \
+            --ks keystore.jks \
+            --ks-key-alias "${{ secrets.KEY_ALIAS }}" \
+            --ks-pass pass:"${{ secrets.KEYSTORE_PASSWORD }}" \
+            --key-pass pass:"${{ secrets.KEY_PASSWORD }}" \
+            --min-sdk-version 21 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            "$ALIGNED_APK"
             
-      - uses: actions/upload-artifact@v4
+          # Финальный файл
+          mv "$ALIGNED_APK" "$OUTPUT_APK"
+
+          echo "Build completed successfully. Output: $OUTPUT_APK"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
           name: signed-gsf-apk
           path: output/GsfProxy.apk
+          retention-days: 5
