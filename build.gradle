@@ -37,7 +37,7 @@ allprojects {
     ext.appVersionCode = versionCode()
     ext.androidCompileSdk = 30
     ext.androidTargetSdk = 24
-    ext.androidMinSdk = 9
+    ext.androidMinSdk = 21
 }
 
 subprojects {
